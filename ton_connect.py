@@ -15,15 +15,12 @@ def init_ton_connect():
     return connector
 
 async def generate_connect_link(chat_id, wallet_name):
-    """
-    Генерирует ссылку и QR-код для подключения кошелька.
-    """
     connector = init_ton_connect()
     if connector.connected:
         await connector.disconnect()
     
-    wallets_list = connector.get_wallets()
-    wallet = next((w for w in wallets_list if w['name'] == wallet_name), None)
+    wallets_list = await connector.get_wallets()
+    wallet = next((w for w in wallets_list if w['name'].lower() == wallet_name.lower()), None)
     
     if not wallet:
         raise TonConnectError(f"Кошелёк {wallet_name} не найден.")
@@ -37,7 +34,7 @@ async def generate_connect_link(chat_id, wallet_name):
     qr_path = f"qr_{chat_id}.png"
     qr_img.save(qr_path)
     
-    return qr_path, connect_request
+    return qr_path, connect_request, connector
 
 async def get_wallet_address(connector):
     """
