@@ -19,4 +19,4 @@ COMMISSION_WALLET = "UQCozdQjw3IhYDcWja8lXeqAE91ugnNKl7lQ4o64WsLUi8Qd"  # Зам
 COMMISSION_RATE = 0.01
 
 # URL манифеста для TON Connect (mainnet)
-TON_CONNECT_MANIFEST_URL = "https://github.com/Dontcryifidiebabby/nullbot/blob/main/tonconnect-manifest.json"  # Актуальный манифест
+TON_CONNECT_MANIFEST_URL = "http://82.146.40.193/tonconnect-manifest.json"  # Актуальный манифест
