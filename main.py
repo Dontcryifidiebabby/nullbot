@@ -114,4 +114,90 @@ async def confirm_buy(update: Update, context):
     elif platform == "stonfi":
         result = api_handlers.buy_token_stonfi(token_address, ton_amount, wallet_address)
     else:  # dedust
-        result
+        result = api_handlers.buy_token_dedust(token_address, ton_amount, wallet_address)
+
+    await query.edit_message_text(result)
+    return ConversationHandler.END
+
+# Начало отслеживания
+async def track(update: Update, context):
+    if "wallet_address" not in context.user_data:
+        await update.message.reply_text("Подключи кошелёк через /connect")
+        return ConversationHandler.END
+    await update.message.reply_text("Введи адрес кошелька разработчика (EQ...):")
+    return DEV_WALLET
+
+# Получение адреса разработчика
+async def get_dev_wallet(update: Update, context):
+    context.user_data["dev_wallet"] = update.message.text
+    await update.message.reply_text("Введи адрес токена, который хочешь продать за TON (EQ...):")
+    return CONFIRM_SELL
+
+# Отслеживание и продажа
+async def confirm_sell(update: Update, context):
+    context.user_data["token_address"] = update.message.text
+    dev_wallet = context.user_data["dev_wallet"]
+    token_address = context.user_data["token_address"]
+    wallet_address = context.user_data["wallet_address"]
+    
+    await update.message.reply_text("Отслеживаю кошелёк разработчика...")
+
+    async def monitor_and_sell():
+        while True:
+            if await api_handlers.check_dev_wallet(dev_wallet):
+                result = api_handlers.sell_token_stonfi(token_address, 100, wallet_address)
+                await context.bot.send_message(chat_id=update.message.chat_id, text=result)
+                break
+            await asyncio.sleep(10)
+
+    asyncio.create_task(monitor_and_sell())
+    return ConversationHandler.END
+
+# Отмена
+async def cancel(update: Update, context):
+    await update.message.reply_text("Отменено.")
+    return ConversationHandler.END
+
+# Главная функция
+def main():
+    application = Application.builder().token(config.BOT_TOKEN).build()
+
+    conv_handler_buy = ConversationHandler(
+        entry_points=[CommandHandler("buy", buy)],
+        states={
+            TOKEN_ADDRESS: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_token_address)],
+            TON_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_ton_amount)],
+            CONFIRM_BUY: [CallbackQueryHandler(confirm_buy)]
+        },
+        fallbacks=[CommandHandler("cancel", cancel)],
+        per_message=True
+    )
+
+    conv_handler_track = ConversationHandler(
+        entry_points=[CommandHandler("track", track)],
+        states={
+            DEV_WALLET: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_dev_wallet)],
+            CONFIRM_SELL: [MessageHandler(filters.TEXT & ~filters.COMMAND, confirm_sell)]
+        },
+        fallbacks=[CommandHandler("cancel", cancel)],
+        per_message=True
+    )
+
+    conv_handler_connect = ConversationHandler(
+        entry_points=[CommandHandler("connect", connect)],
+        states={
+            WALLET_CONNECT: [CallbackQueryHandler(handle_wallet_selection, pattern="^wallet_")]
+        },
+        fallbacks=[CommandHandler("cancel", cancel)],
+        per_message=True
+    )
+
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(conv_handler_connect)
+    application.add_handler(conv_handler_buy)
+    application.add_handler(conv_handler_track)
+
+    application.run_polling(timeout=60)
+
+if __name__ == "__main__":
+    main()
