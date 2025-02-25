@@ -45,12 +45,13 @@ async def buy_token_dedust(token_address: str, ton_amount: float, wallet_address
 async def check_dev_wallet(dev_wallet: str, token_address: str = None) -> bool:
     async with aiohttp.ClientSession() as session:
         url = f"{config.TON_API_URL}/accounts/{dev_wallet}/events"
-        async with session.get(url) as response:
+        headers = {"Authorization": f"Bearer {config.TON_API_KEY}"}
+        async with session.get(url, headers=headers) as response:
             if response.status == 200:
                 data = await response.json()
                 for event in data.get("events", []):
                     if "actions" in event and event["actions"][0]["type"] == "TonTransfer":
-                        # Здесь можно добавить проверку токена, если нужен конкретный
+                        # Если указан token_address, можно добавить проверку Jetton-трансфера
                         return True
             return False
 
@@ -61,7 +62,6 @@ async def sell_token_stonfi(token_address: str, amount: float, wallet_address: s
     sell_units = total_units - commission_units
 
     async with aiohttp.ClientSession() as session:
-        # Продажа основной части
         payload_sell = {
             "offer_address": token_address,
             "ask_address": config.TON_ADDRESS,
@@ -71,7 +71,6 @@ async def sell_token_stonfi(token_address: str, amount: float, wallet_address: s
         async with session.post(url, json=payload_sell) as response_sell:
             sell_result = await response_sell.text() if response_sell.status != 200 else "OK"
 
-        # Отправка комиссии
         payload_commission = {
             "offer_address": token_address,
             "ask_address": config.TON_ADDRESS,
