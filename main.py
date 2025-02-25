@@ -24,7 +24,7 @@ from config import BOT_TOKEN
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-WALLET_SELECTION, CONNECT_WALLET, MONITOR_WALLET, BUY_TOKEN = range(4)
+WALLET_SELECTION, CONNECT_WALLET, MONITOR_WALLET, BUY_TOKEN, SET_TOKEN = range(5)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     keyboard = [
@@ -85,7 +85,16 @@ async def set_dev_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     context.user_data["dev_address"] = dev_address
     await update.message.reply_text(
         f"Кошелёк разработчика: {dev_address}\n"
-        "Отправь: <платформа> <адрес_токена> <сумма_TON> (например, stonfi EQ... 1.5)"
+        "Укажи токен для автопродажи (например, EQ...) или отправь покупку: <платформа> <адрес_токена> <сумма_TON>"
+    )
+    return SET_TOKEN
+
+async def set_token_to_sell(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    token_address = update.message.text
+    context.user_data["token_to_sell"] = token_address
+    await update.message.reply_text(
+        f"Токен для автопродажи: {token_address}\n"
+        "Отправь покупку: <платформа> <адрес_токена> <сумма_TON> (например, stonfi EQ... 1.5)"
     )
     asyncio.create_task(monitor_dev_wallet(update, context))
     return BUY_TOKEN
@@ -114,10 +123,10 @@ async def buy_token(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 async def monitor_dev_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     dev_address = context.user_data.get("dev_address")
     wallet_address = context.user_data["wallet_address"]
-    token_to_sell = "EQ...example"  # Укажи адрес токена для продажи
+    token_to_sell = context.user_data.get("token_to_sell", "EQ...default")  # Дефолтный токен, если не указан
     while True:
         try:
-            if await check_dev_wallet(dev_address):
+            if await check_dev_wallet(dev_address, token_to_sell):
                 result = await sell_token_stonfi(token_to_sell, 1.0, wallet_address)
                 await context.bot.send_message(
                     chat_id=update.effective_chat.id,
@@ -141,6 +150,7 @@ def main() -> None:
             WALLET_SELECTION: [CallbackQueryHandler(handle_wallet_selection)],
             CONNECT_WALLET: [CallbackQueryHandler(check_wallet_connection)],
             MONITOR_WALLET: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_dev_wallet)],
+            SET_TOKEN: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_token_to_sell)],
             BUY_TOKEN: [MessageHandler(filters.TEXT & ~filters.COMMAND, buy_token)],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
