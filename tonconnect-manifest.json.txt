@@ -1,0 +1,7 @@
+{
+  "url": "@nulltonproject_bot",
+  "name": "Null Bot",
+  "iconUrl": "https://sotni.ru/wp-content/uploads/2023/08/nol-na-belom-fone-1.webp",
+  "termsOfUseUrl": "https://example.com/terms",
+  "privacyPolicyUrl": "https://example.com/privacy"
+}
