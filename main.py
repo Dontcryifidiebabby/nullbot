@@ -1,203 +1,114 @@
+import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ConversationHandler, CallbackQueryHandler
-import config
-import api_handlers
-import ton_connect
-import asyncio
-import os
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    CallbackQueryHandler,
+    ConversationHandler,
+    ContextTypes,
+)
+from ton_connect import TONConnectHandler
 
-# Проверка версии библиотеки
-import telegram
-print(f"Using python-telegram-bot version: {telegram.__version__}")
+# Настройка логирования
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
+)
+logger = logging.getLogger(__name__)
 
 # Состояния разговора
-WALLET_CONNECT, TOKEN_ADDRESS, TON_AMOUNT, DEV_WALLET, CONFIRM_BUY, CONFIRM_SELL = range(6)
+WALLET_SELECTION, CONNECT_WALLET = range(2)
 
-# Глобальный словарь для хранения TON Connect коннекторов
-connectors = {}
-
-# Команда /start
-async def start(update: Update, context):
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Запускает бота и предлагает выбрать кошелёк."""
+    keyboard = [
+        [InlineKeyboardButton("Tonkeeper", callback_data="Tonkeeper")],
+        [InlineKeyboardButton("TON Wallet", callback_data="TON Wallet")],
+        [InlineKeyboardButton("MyTonWallet", callback_data="MyTonWallet")],
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text(
-        "Привет! Это бот для торговли на TON (mainnet).\n"
-        "Сначала подключи кошелёк: /connect\n"
-        "Команды:\n"
-        "1. /buy - Купить токен за TON\n"
-        "2. /track - Отслеживать кошелёк разработчика"
+        "Привет! Выбери кошелёк для подключения:", reply_markup=reply_markup
     )
-    return ConversationHandler.END
+    return WALLET_SELECTION
 
-# Подключение кошелька
-async def connect(update: Update, context):
-    wallets = ton_connect.get_wallet_options(update.message.chat_id)
-    keyboard = [
-        [InlineKeyboardButton(wallet["name"], callback_data=f"wallet_{wallet_name}")]
-        for wallet_name, wallet in wallets.items()
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text("Выберите кошелёк для подключения:", reply_markup=reply_markup)
-    return WALLET_CONNECT
-
-# Обработчик выбора кошелька
-async def handle_wallet_selection(update: Update, context):
+async def handle_wallet_selection(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Обрабатывает выбор кошелька и отправляет QR-код."""
     query = update.callback_query
     await query.answer()
 
-    wallet_name = query.data.replace("wallet_", "")
-    wallets = ton_connect.get_wallet_options(query.message.chat_id)
-    selected_wallet = wallets.get(wallet_name)
+    wallet_name = query.data
+    chat_id = query.message.chat_id
 
-    if selected_wallet:
-        qr_path, deeplink, connector = await ton_connect.generate_connect_link(query.message.chat_id, wallet_name)
-        await query.message.reply_photo(
-            photo=open(qr_path, 'rb'),
-            caption=f"Сканируйте QR-код или перейдите по ссылке для подключения {wallet_name}:\n{deeplink}"
-        )
-        connectors[query.message.chat_id] = connector
-        try:
-            wallet_address = await ton_connect.get_wallet_address(connector)
-            context.user_data["wallet_address"] = wallet_address
-            await query.message.reply_text(f"Кошелёк подключён! Адрес: {wallet_address}")
-        except Exception as e:
-            await query.message.reply_text(f"Ошибка подключения: {str(e)}")
-        finally:
-            os.remove(qr_path)
-    else:
-        await query.message.reply_text("Ошибка: кошелёк не найден.")
-
-    return ConversationHandler.END
-
-# Начало покупки
-async def buy(update: Update, context):
-    if "wallet_address" not in context.user_data:
-        await update.message.reply_text("Подключи кошелёк через /connect")
-        return ConversationHandler.END
-    await update.message.reply_text("Введи адрес токена, который хочешь купить за TON (EQ...):")
-    return TOKEN_ADDRESS
-
-# Получение адреса токена
-async def get_token_address(update: Update, context):
-    context.user_data["token_address"] = update.message.text
-    await update.message.reply_text("Сколько TON ты хочешь потратить?")
-    return TON_AMOUNT
-
-# Получение суммы TON
-async def get_ton_amount(update: Update, context):
     try:
-        ton_amount = float(update.message.text)
-        if ton_amount <= 0:
-            raise ValueError
-        context.user_data["ton_amount"] = ton_amount
-    except ValueError:
-        await update.message.reply_text("Введи корректное число больше 0!")
-        return TON_AMOUNT
-    keyboard = [
-        [InlineKeyboardButton("GasPump", callback_data="gaspump"),
-         InlineKeyboardButton("Ston.fi", callback_data="stonfi"),
-         InlineKeyboardButton("DeDust", callback_data="dedust")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text("Выбери платформу:", reply_markup=reply_markup)
-    return CONFIRM_BUY
+        ton_handler = TONConnectHandler()
+        qr_path, deeplink, connector = ton_handler.generate_connect_link(chat_id, wallet_name)
 
-# Подтверждение покупки
-async def confirm_buy(update: Update, context):
+        # Сохраняем connector в context для дальнейшего использования
+        context.user_data["connector"] = connector
+
+        # Отправляем QR-код и deeplink
+        with open(qr_path, "rb") as qr_file:
+            await query.message.reply_photo(photo=qr_file, caption="Отсканируй QR-код для подключения кошелька.")
+        await query.message.reply_text(f"Или используй ссылку: {deeplink}")
+
+        return CONNECT_WALLET
+
+    except Exception as e:
+        await query.message.reply_text(f"Ошибка: {str(e)}")
+        return ConversationHandler.END
+
+async def check_wallet_connection(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Проверяет подключение кошелька."""
     query = update.callback_query
     await query.answer()
-    platform = query.data
-    token_address = context.user_data["token_address"]
-    ton_amount = context.user_data["ton_amount"]
-    wallet_address = context.user_data["wallet_address"]
 
-    if platform == "gaspump":
-        result = api_handlers.buy_token_gaspump(token_address, ton_amount, wallet_address)
-    elif platform == "stonfi":
-        result = api_handlers.buy_token_stonfi(token_address, ton_amount, wallet_address)
-    else:  # dedust
-        result = api_handlers.buy_token_dedust(token_address, ton_amount, wallet_address)
-
-    await query.edit_message_text(result)
-    return ConversationHandler.END
-
-# Начало отслеживания
-async def track(update: Update, context):
-    if "wallet_address" not in context.user_data:
-        await update.message.reply_text("Подключи кошелёк через /connect")
+    connector = context.user_data.get("connector")
+    if not connector:
+        await query.message.reply_text("Ошибка: сессия подключения утеряна. Начни заново с /start.")
         return ConversationHandler.END
-    await update.message.reply_text("Введи адрес кошелька разработчика (EQ...):")
-    return DEV_WALLET
 
-# Получение адреса разработчика
-async def get_dev_wallet(update: Update, context):
-    context.user_data["dev_wallet"] = update.message.text
-    await update.message.reply_text("Введи адрес токена, который хочешь продать за TON (EQ...):")
-    return CONFIRM_SELL
+    try:
+        ton_handler = TONConnectHandler()
+        is_connected = await ton_handler.check_connection(connector)
+        if is_connected:
+            wallet_address = ton_handler.get_wallet_address(connector)
+            await query.message.reply_text(f"Кошелёк подключён! Адрес: {wallet_address}")
+        else:
+            await query.message.reply_text("Кошелёк ещё не подключён. Попробуй снова.")
+        return ConversationHandler.END
 
-# Отслеживание и продажа
-async def confirm_sell(update: Update, context):
-    context.user_data["token_address"] = update.message.text
-    dev_wallet = context.user_data["dev_wallet"]
-    token_address = context.user_data["token_address"]
-    wallet_address = context.user_data["wallet_address"]
-    
-    await update.message.reply_text("Отслеживаю кошелёк разработчика...")
+    except Exception as e:
+        await query.message.reply_text(f"Ошибка проверки: {str(e)}")
+        return ConversationHandler.END
 
-    async def monitor_and_sell():
-        while True:
-            if await api_handlers.check_dev_wallet(dev_wallet):
-                result = api_handlers.sell_token_stonfi(token_address, 100, wallet_address)
-                await context.bot.send_message(chat_id=update.message.chat_id, text=result)
-                break
-            await asyncio.sleep(10)
-
-    asyncio.create_task(monitor_and_sell())
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Отменяет процесс подключения."""
+    await update.message.reply_text("Процесс подключения отменён.")
     return ConversationHandler.END
 
-# Отмена
-async def cancel(update: Update, context):
-    await update.message.reply_text("Отменено.")
-    return ConversationHandler.END
+def main() -> None:
+    """Запускает бота."""
+    # Замени 'YOUR_TOKEN' на токен твоего бота
+    application = Application.builder().token("8094518471:AAGbq7pF75_LXMrO8DL7vbOg9F3czNImUPM").build()
 
-# Главная функция
-def main():
-    application = Application.builder().token(config.BOT_TOKEN).build()
-
-    conv_handler_buy = ConversationHandler(
-        entry_points=[CommandHandler("buy", buy)],
+    # Настройка ConversationHandler
+    conv_handler = ConversationHandler(
+        entry_points=[CommandHandler("start", start)],
         states={
-            TOKEN_ADDRESS: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_token_address)],
-            TON_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_ton_amount)],
-            CONFIRM_BUY: [CallbackQueryHandler(confirm_buy)]
+            WALLET_SELECTION: [CallbackQueryHandler(handle_wallet_selection)],
+            CONNECT_WALLET: [CallbackQueryHandler(check_wallet_connection)],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
-        per_message=True
+        per_message=True,  # Устраняем предупреждение PTBUserWarning
     )
 
-    conv_handler_track = ConversationHandler(
-        entry_points=[CommandHandler("track", track)],
-        states={
-            DEV_WALLET: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_dev_wallet)],
-            CONFIRM_SELL: [MessageHandler(filters.TEXT & ~filters.COMMAND, confirm_sell)]
-        },
-        fallbacks=[CommandHandler("cancel", cancel)],
-        per_message=True
-    )
+    application.add_handler(conv_handler)
 
-    conv_handler_connect = ConversationHandler(
-        entry_points=[CommandHandler("connect", connect)],
-        states={
-            WALLET_CONNECT: [CallbackQueryHandler(handle_wallet_selection, pattern="^wallet_")]
-        },
-        fallbacks=[CommandHandler("cancel", cancel)],
-        per_message=True
-    )
+    # Обработка ошибок
+    application.add_error_handler(lambda update, context: logger.error(f"Ошибка: {context.error}"))
 
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(conv_handler_connect)
-    application.add_handler(conv_handler_buy)
-    application.add_handler(conv_handler_track)
-
-    application.run_polling(timeout=60)
+    # Запуск бота
+    application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
     main()
