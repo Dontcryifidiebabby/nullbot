@@ -7,7 +7,7 @@ class TONConnectHandler:
     def __init__(self):
         # Инициализация TonConnect с манифестом
         self.connector = TonConnect(
-            manifest_url='https://raw.githubusercontent.com/ton-community/ton-connect/master/tonconnect-manifest.json'
+            manifest_url='http://82.146.40.193/tonconnect-manifest.json'
         )
 
     def generate_connect_link(self, chat_id: int, wallet_name: str) -> tuple[str, str, TonConnect]:
