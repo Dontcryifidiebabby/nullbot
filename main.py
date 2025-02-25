@@ -7,14 +7,14 @@ import asyncio
 import os
 import httpx
 
-# Проверка версии библиотеки (только вывод)
+# Проверка версии библиотеки
 import telegram
 print(f"Using python-telegram-bot version: {telegram.__version__}")
 
 # Состояния разговора
 WALLET_CONNECT, TOKEN_ADDRESS, TON_AMOUNT, DEV_WALLET, CONFIRM_BUY, CONFIRM_SELL = range(6)
 
-# Глобальный словарь для TON Connect
+# Глобальный словарь для хранения TON Connect коннекторов
 connectors = {}
 
 # Команда /start
@@ -49,10 +49,20 @@ async def handle_wallet_selection(update: Update, context):
     selected_wallet = wallets.get(wallet_name)
 
     if selected_wallet:
+        qr_path, deeplink, connector = await ton_connect.generate_connect_link(query.message.chat_id, wallet_name)
         await query.message.reply_photo(
-            photo=selected_wallet["qr_code"],
-            caption=f"Сканируйте QR-код или перейдите по ссылке для подключения кошелька {selected_wallet['name']}:\n{selected_wallet['deeplink']}"
+            photo=open(qr_path, 'rb'),
+            caption=f"Сканируйте QR-код или перейдите по ссылке для подключения {wallet_name}:\n{deeplink}"
         )
+        connectors[query.message.chat_id] = connector
+        try:
+            wallet_address = await ton_connect.get_wallet_address(connector)
+            context.user_data["wallet_address"] = wallet_address
+            await query.message.reply_text(f"Кошелёк подключён! Адрес: {wallet_address}")
+        except Exception as e:
+            await query.message.reply_text(f"Ошибка подключения: {str(e)}")
+        finally:
+            os.remove(qr_path)
     else:
         await query.message.reply_text("Ошибка: кошелёк не найден.")
 
@@ -151,16 +161,9 @@ async def cancel(update: Update, context):
 
 # Главная функция
 def main():
-    # Настройка HTTP-клиента с увеличенным тайм-аутом и прокси (если нужно)
-    http_client = httpx.AsyncClient(
-        timeout=60.0,  # Увеличиваем тайм-аут до 60 секунд
-        # proxies=config.PROXY_URL  # Раскомментируй, если нужен прокси
-    )
-    
-    # Создание приложения с кастомным HTTP-клиентом
-    application = Application.builder().token(config.BOT_TOKEN).build()
+    http_client = httpx.AsyncClient(timeout=60.0)
+    application = Application.builder().token(config.BOT_TOKEN).http_client(http_client).build()
 
-    # Обработчики
     conv_handler_buy = ConversationHandler(
         entry_points=[CommandHandler("buy", buy)],
         states={
@@ -168,7 +171,8 @@ def main():
             TON_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_ton_amount)],
             CONFIRM_BUY: [CallbackQueryHandler(confirm_buy)]
         },
-        fallbacks=[CommandHandler("cancel", cancel)]
+        fallbacks=[CommandHandler("cancel", cancel)],
+        per_message=True
     )
 
     conv_handler_track = ConversationHandler(
@@ -177,7 +181,8 @@ def main():
             DEV_WALLET: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_dev_wallet)],
             CONFIRM_SELL: [MessageHandler(filters.TEXT & ~filters.COMMAND, confirm_sell)]
         },
-        fallbacks=[CommandHandler("cancel", cancel)]
+        fallbacks=[CommandHandler("cancel", cancel)],
+        per_message=True
     )
 
     conv_handler_connect = ConversationHandler(
@@ -185,7 +190,8 @@ def main():
         states={
             WALLET_CONNECT: [CallbackQueryHandler(handle_wallet_selection, pattern="^wallet_")]
         },
-        fallbacks=[CommandHandler("cancel", cancel)]
+        fallbacks=[CommandHandler("cancel", cancel)],
+        per_message=True
     )
 
     application.add_handler(CommandHandler("start", start))
